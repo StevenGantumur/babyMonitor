@@ -1,6 +1,6 @@
 # Baby Monitor
 
-This is a real time baby monitor application built with Java using using CV for computer vision.
+This is a real time baby monitor application built with Java using CV for computer vision.
 
 # Features
 
