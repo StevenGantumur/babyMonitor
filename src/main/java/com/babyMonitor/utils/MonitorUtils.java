@@ -15,15 +15,15 @@ import java.util.Date;
 
 public class MonitorUtils {
 
-    static int currentMotionLevel = 0;
-    static String babyState = "Unknown";
-    static java.util.ArrayList<String> alertLog = new java.util.ArrayList<>();
-    static javax.swing.JLabel statusLabel = null;
-    static javax.swing.JLabel babyStateLabel = null;
-    static javax.swing.JLabel motionLabel = null;
-    static javax.swing.JLabel lastMovementLabel = null;
-    static javax.swing.JTextArea alertLogArea = null;
-    static long lastMovementTime = 0;
+    public static int currentMotionLevel = 0;
+    public static String babyState = "Unknown";
+    public static java.util.ArrayList<String> alertLog = new java.util.ArrayList<>();
+    public static javax.swing.JLabel statusLabel = null;
+    public static javax.swing.JLabel babyStateLabel = null;
+    public static javax.swing.JLabel motionLabel = null;
+    public static javax.swing.JLabel lastMovementLabel = null;
+    public static javax.swing.JTextArea alertLogArea = null;
+    public static long lastMovementTime = 0;
 
     public static JPanel buildInfoPanel() {
         JPanel infoPanel = new JPanel();
@@ -90,7 +90,7 @@ public class MonitorUtils {
         return infoPanel;
     }
 
-    static void updateInfoPanel(boolean danger) {
+    public static void updateInfoPanel(boolean danger) {
         SwingUtilities.invokeLater(()-> {
             if(danger) {
                 statusLabel.setText("DANGER");
@@ -124,7 +124,7 @@ public class MonitorUtils {
         });
     }
 
-    static void logAlert(String message) {
+    public static void logAlert(String message) {
         String timestamp = new SimpleDateFormat("hh:mm:ss a").format(new Date());
         String entry = timestamp + " - " + message + "\n";
         alertLog.add(entry);

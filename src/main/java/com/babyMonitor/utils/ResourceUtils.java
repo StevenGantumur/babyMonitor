@@ -8,8 +8,8 @@ import java.nio.file.StandardCopyOption;
 import com.babyMonitor.CribMonitor;
 
 public class ResourceUtils {
-    static String extractResource(String resourceName) throws Exception {
-        InputStream is = CribMonitor.class.getResourceAsStream("/" + resourceName);
+    public static String extractResource(String resourceName) throws Exception {
+        InputStream is = ResourceUtils.class.getResourceAsStream("/" + resourceName);
         if (is == null) throw new Exception("Resource not found: " + resourceName);
         File temp = File.createTempFile(resourceName, "");
         temp.deleteOnExit();
