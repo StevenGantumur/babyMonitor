@@ -17,7 +17,7 @@ public class Main {
             CribMonitor.start();
         } else if (choice == 2) {
             System.out.println("Starting Room Monitor...");
-            //RoomMonitor.start();
+            RoomMonitor.start();
         } else {
             System.out.println("Invalid choice. Please restart.");
         }
