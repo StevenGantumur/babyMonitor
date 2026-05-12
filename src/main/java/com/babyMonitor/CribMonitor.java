@@ -4,6 +4,7 @@ import java.awt.BorderLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
+import java.util.List;
 import javax.swing.JFrame;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
@@ -17,6 +18,7 @@ import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.objdetect.CascadeClassifier;
 import org.opencv.videoio.VideoCapture;
+import com.babyMonitor.utils.DangerZone;
 import com.babyMonitor.utils.ImageUtils;
 import com.babyMonitor.utils.ResourceUtils;
 import com.babyMonitor.utils.MonitorUtils;
@@ -25,7 +27,7 @@ import nu.pattern.OpenCV;
 
 public class CribMonitor {
     // Crib setup and count
-    static Point[] cribCorners = new Point[4];
+    static DangerZone cribZone = new DangerZone("Crib", 0);
     static int clickCount = 0;
     static boolean calibrated = false;
     // diff
@@ -79,7 +81,7 @@ public class CribMonitor {
                     double scaleY = (double) frame.rows() / panel.getHeight();
                     int actualX = (int)(e.getX() * scaleX);
                     int actualY = (int)(e.getY() * scaleY);
-                    cribCorners[clickCount] = new Point(actualX, actualY);
+                    cribZone.addPoint(new Point(actualX, actualY));
                     clickCount++;
                     if (clickCount == 4) {
                         calibrated = true;
@@ -110,7 +112,7 @@ public class CribMonitor {
                     1.2, new Scalar(255, 255, 255), 2);
 
                 for (int i = 0; i < clickCount; i++) {
-                    Imgproc.circle(display, cribCorners[i], 8,
+                    Imgproc.circle(display, cribZone.getPoints().get(i), 8,
                         new Scalar(0, 255, 255), -1);
                 }
                 currentImage = ImageUtils.matToBufferedImage(display);
@@ -133,10 +135,11 @@ public class CribMonitor {
                 }
                 MonitorUtils.updateInfoPanel(danger);
 
-                Imgproc.line(frame, cribCorners[0], cribCorners[1], new Scalar(0, 255, 255), 2);
-                Imgproc.line(frame, cribCorners[1], cribCorners[2], new Scalar(0, 255, 255), 2);
-                Imgproc.line(frame, cribCorners[2], cribCorners[3], new Scalar(0, 255, 255), 2);
-                Imgproc.line(frame, cribCorners[3], cribCorners[0], new Scalar(0, 255, 255), 2);
+                List<Point> corners = cribZone.getPoints();
+                for (int i = 0; i < corners.size(); i++) {
+                    Imgproc.line(frame, corners.get(i), corners.get((i + 1) % corners.size()),
+                        new Scalar(0, 255, 255), 2);
+                }
 
                 faceDetector.detectMultiScale(grayFrame, faces, 1.1, 5, 0,
                     new Size(30, 30), new Size());
@@ -174,10 +177,11 @@ public class CribMonitor {
 
         Rect motionArea = Imgproc.boundingRect(points);
 
-        int left   = (int) Math.min(cribCorners[0].x, cribCorners[3].x);
-        int top    = (int) Math.min(cribCorners[0].y, cribCorners[1].y);
-        int right  = (int) Math.max(cribCorners[1].x, cribCorners[2].x);
-        int bottom = (int) Math.max(cribCorners[2].y, cribCorners[3].y);
+        List<Point> corners = cribZone.getPoints();
+        int left   = (int) Math.min(corners.get(0).x, corners.get(3).x);
+        int top    = (int) Math.min(corners.get(0).y, corners.get(1).y);
+        int right  = (int) Math.max(corners.get(1).x, corners.get(2).x);
+        int bottom = (int) Math.max(corners.get(2).y, corners.get(3).y);
 
         int dangerZoneX = (right - left) / 10;
         int dangerZoneY = (bottom - top) / 10;
