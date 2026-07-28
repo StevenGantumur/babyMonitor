@@ -1,217 +1,185 @@
 package com.babyMonitor;
 
-import java.awt.BorderLayout;
-import java.awt.event.KeyAdapter;
-import java.awt.event.KeyEvent;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.awt.event.MouseMotionAdapter;
 import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
-
-import javax.swing.JFrame;
-import javax.swing.JPanel;
-import javax.swing.SwingUtilities;
-
 import org.opencv.core.Core;
 import org.opencv.core.Mat;
-import org.opencv.core.MatOfRect;
 import org.opencv.core.Point;
 import org.opencv.core.Scalar;
 import org.opencv.imgproc.Imgproc;
+import org.opencv.core.MatOfRect;
+import org.opencv.core.Rect;
+import org.opencv.core.Size;
 import org.opencv.objdetect.CascadeClassifier;
-import org.opencv.videoio.VideoCapture;
-
+import com.babyMonitor.utils.ResourceUtils;
 import com.babyMonitor.utils.DangerZone;
 import com.babyMonitor.utils.ImageUtils;
 import com.babyMonitor.utils.MonitorUtils;
 
-import nu.pattern.OpenCV;
+public class RoomMonitor implements Monitor {
 
-public class RoomMonitor {
-    
-    static BufferedImage currentImage = null;
-    static List<DangerZone> zones = new ArrayList<>();
-    static DangerZone currentZone = null;
-    static boolean calibrated = false;
-    static Point currentMouse = new Point(0, 0);
-    
-    static String extractResource(String resourceName) throws Exception {
-        InputStream is = CribMonitor.class.getResourceAsStream("/" + resourceName);
-        if (is == null) throw new Exception("Resource not found: " + resourceName);
-        File temp = File.createTempFile(resourceName, "");
-        temp.deleteOnExit();
-        Files.copy(is, temp.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        return temp.getAbsolutePath();
+    private static final int DIFF_THRESHOLD = 30;
+    private static final int ZONE_SENSITIVITY = 100;
+
+    private static final Scalar YELLOW = new Scalar(0, 255, 255);
+    private static final Scalar GREEN  = new Scalar(0, 255, 0);
+    private static final Scalar RED    = new Scalar(0, 0, 255);
+    private static final Scalar GRAY   = new Scalar(128, 128, 128);
+
+    private List<DangerZone> zones = new ArrayList<>();
+    private DangerZone currentZone = new DangerZone("Zone 1", ZONE_SENSITIVITY);
+    private boolean calibrated = false;
+    private Point currentMouse = new Point(0, 0);
+
+    private final Mat grayFrame = new Mat();
+    private final Mat previousFrame = new Mat();
+    private final Mat diff = new Mat();
+
+    private CascadeClassifier bodyDetector;
+    private final MatOfRect bodies = new MatOfRect();
+
+    @Override
+    public String getName() {
+        return "Room Monitor";
     }
 
-    public static void start() {
-        OpenCV.loadLocally();
-        CascadeClassifier bodyDetector;
+    @Override
+    public void setActive(boolean active) {
+        if (!active) return;
 
-        try {
-            String bodyPath = extractResource("haarcascade_frontalface_default.xml");
-            bodyDetector = new CascadeClassifier(bodyPath);
-        } catch (Exception e) {
-            System.out.println("Error: " + e.getMessage());
+        if (bodyDetector == null) {
+            try {
+                bodyDetector = new CascadeClassifier(
+                    ResourceUtils.extractResource("haarcascade_fullbody.xml"));
+            } catch (Exception e) {
+                System.out.println("Room Monitor: Could not load body cascade - " + e.getMessage());
+            }
+        }
+
+        previousFrame.release();
+        System.out.println(calibrated
+            ? "Room Monitor active. Press 'r' to recalibrate."
+            : "Room Monitor active. Click corners, ENTER closes a zone, ENTER again finishes.");
+    }
+
+    @Override
+    public void onClick(int x, int y) {
+        if (calibrated) return;
+        currentZone.addPoint(new Point(x, y));
+    }
+
+    @Override
+    public void onMouseMove(int x, int y) {
+        currentMouse = new Point(x, y);
+    }
+
+    @Override
+    public void onKey(char key) {
+        if (key == 'r' || key == 'R') {
+            zones = new ArrayList<>();
+            currentZone = new DangerZone("Zone 1", ZONE_SENSITIVITY);
+            calibrated = false;
+            System.out.println("Room Monitor: zones reset.");
             return;
         }
 
-        VideoCapture camera = new VideoCapture(0);
-        Mat frame = new Mat();
-        Mat grayFrame = new Mat();
-        Mat previousFrame = new Mat();
-        Mat diff = new Mat();
-        MatOfRect bodies = new MatOfRect();
+        if (key != '\n' || calibrated) return;
 
-        JFrame window = new JFrame("Room Monitor");
-        window.setLayout(new BorderLayout());
-        window.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        JPanel panel = new JPanel() {
-            @Override
-            protected void paintComponent(java.awt.Graphics g) {
-                super.paintComponent(g);
-                if (currentImage != null) {
-                    g.drawImage(currentImage, 0, 0, getWidth(), getHeight(), null);
-                }
-            }
-        };
-
-        JPanel infoPanel = MonitorUtils.buildInfoPanel();
-
-        window.add(panel, BorderLayout.CENTER);
-        window.add(infoPanel, BorderLayout.EAST);
-        window.setSize(1560, 720);
-        window.setVisible(true);
-
-
-        currentZone = new DangerZone("Zone 1", 100);
-
-        panel.setFocusable(true);
-        panel.requestFocusInWindow();
-
-        panel.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                if (!calibrated) {
-                    double scaleX = (double) frame.cols() / panel.getWidth();
-                    double scaleY = (double) frame.rows() / panel.getHeight();
-                    int actualX = (int)(e.getX() * scaleX);
-                    int actualY = (int)(e.getY() * scaleY);
-                    currentZone.addPoint(new Point(actualX, actualY));
-                }
-            }
-        });
-
-        panel.addKeyListener(new KeyAdapter() {
-              @Override
-              public void keyPressed(KeyEvent e) {
-                  if (e.getKeyCode() == KeyEvent.VK_ENTER && !calibrated) {
-                      if (currentZone.getPoints().isEmpty()) {
-                          calibrated = true;
-                          System.out.println("Calibration complete! " + zones.size() + " zone(s) defined.");
-                      } else {
-                          zones.add(currentZone);
-                          currentZone = new DangerZone("Zone " + (zones.size() + 1), 100);
-                      }
-                  }
-              }
-        });
-
-        panel.addMouseMotionListener(new MouseMotionAdapter() {
-            @Override
-            public void mouseMoved(MouseEvent e) {
-                double scaleX = (double) frame.cols() / panel.getWidth();
-                double scaleY = (double) frame.rows() / panel.getHeight();
-                int actualX = (int)(e.getX() * scaleX);
-                int actualY = (int)(e.getY() * scaleY);
-                currentMouse = new Point(actualX, actualY);
-            }
-        });
-
-        while(camera.isOpened()) {
-            camera.read(frame);
-            if (frame.empty()) continue;
-            Imgproc.cvtColor(frame, grayFrame, Imgproc.COLOR_BGR2GRAY);
-
-            if(!calibrated){
-                Mat display = frame.clone();
-
-                Imgproc.putText(display,
-                      "Click corners. Press ENTER to close zone. Double ENTER when done.",
-                      new Point(10, 30),
-                      Imgproc.FONT_HERSHEY_SIMPLEX,
-                      0.7, new Scalar(255, 255, 255), 2);
-
-                for (DangerZone zone: zones) {
-                    List<Point> points = zone.getPoints();
-                    for(int i = 0; i < points.size(); i ++){
-                        Imgproc.circle(display, points.get(i), 6, new Scalar(0, 255, 0), -1);
-                        Imgproc.line(display, points.get(i), points.get((i + 1) % points.size()),
-                            new Scalar(0, 255, 0), 2);
-                    }
-                }
-
-                List<Point> currentPts = currentZone.getPoints();
-                for (int i = 0; i < currentPts.size(); i++) {
-                    Imgproc.circle(display, currentPts.get(i), 6, new Scalar(0, 255, 255), -1);
-                }
-                for (int i = 0; i < currentPts.size() - 1; i++) {
-                    Imgproc.line(display, currentPts.get(i), currentPts.get(i + 1),
-                        new Scalar(0, 255, 255), 2);
-                }
-                if (!currentPts.isEmpty()) {
-                    Imgproc.line(display, currentPts.get(currentPts.size() - 1), currentMouse,
-                        new Scalar(128, 128, 128), 1);
-                }
-
-                currentImage = ImageUtils.matToBufferedImage(display);
-                SwingUtilities.invokeLater(() -> panel.repaint());
-            }
-
-            else{
-                if (previousFrame.empty()) {
-                    grayFrame.copyTo(previousFrame);
-                    continue;
-                }
-
-                Core.absdiff(previousFrame, grayFrame, diff);
-                Imgproc.threshold(diff, diff, 30, 255, Imgproc.THRESH_BINARY);
-                grayFrame.copyTo(previousFrame);
-
-                boolean anyDanger = false;
-
-                for(DangerZone zone: zones){
-                    boolean zoneDanger = zone.checkDanger(diff);
-                    Scalar color = zoneDanger ? new Scalar(0, 0, 255) : new Scalar(0, 255, 0);
-
-                    List<Point> points = zone.getPoints();
-                    for(int i = 0; i < points.size(); i++){
-                        Imgproc.line(frame, points.get(i), points.get((i + 1) % points.size()), color, 2);
-                    }
-
-                    if(zoneDanger) { 
-                        anyDanger = true;
-                        MonitorUtils.logAlert("Danger in " + zone.getName());
-                        Imgproc.putText(frame, "DANGER: " + zone.getName(),
-                        points.get(0),
-                        Imgproc.FONT_HERSHEY_SIMPLEX,
-                        0.8, new Scalar(0, 0, 255), 2);
-                    }
-                }
-
-                MonitorUtils.updateInfoPanel(anyDanger);
-                currentImage = ImageUtils.matToBufferedImage(frame);
-                SwingUtilities.invokeLater(() -> panel.repaint());
-            }
-            
+        // Empty current zone means a second consecutive ENTER — that ends calibration.
+        if (currentZone.getPoints().isEmpty()) {
+            calibrated = true;
+            System.out.println("Calibration complete! " + zones.size() + " zone(s) defined.");
+        } else {
+            zones.add(currentZone);
+            currentZone = new DangerZone("Zone " + (zones.size() + 1), ZONE_SENSITIVITY);
         }
     }
 
-    
+    @Override
+    public BufferedImage processFrame(Mat frame) {
+        Imgproc.cvtColor(frame, grayFrame, Imgproc.COLOR_BGR2GRAY);
+
+        if (!calibrated) {
+            return ImageUtils.matToBufferedImage(drawCalibration(frame));
+        }
+
+        if (previousFrame.empty()) {
+            grayFrame.copyTo(previousFrame);
+            return ImageUtils.matToBufferedImage(frame);
+        }
+
+        Core.absdiff(previousFrame, grayFrame, diff);
+        Imgproc.threshold(diff, diff, DIFF_THRESHOLD, 255, Imgproc.THRESH_BINARY);
+        grayFrame.copyTo(previousFrame);
+
+        MonitorUtils.currentMotionLevel = Core.countNonZero(diff);
+        if(bodyDetector != null) {
+            bodyDetector.detectMultiScale(grayFrame, bodies, 1.1, 3, 0, new Size(50, 100), new Size());
+        }
+        boolean anyDanger = false;
+
+        for (DangerZone zone : zones) {
+            boolean zoneDanger = zone.checkDanger(diff);
+            boolean newDanger = zone.isNewDanger(zoneDanger);
+            drawPolygon(frame, zone.getPoints(), zoneDanger ? RED : GREEN);
+
+            if (zoneDanger) {
+                boolean bodyInZone = false;
+                Rect[] detected = bodies.toArray();
+                for(Rect body: detected) {
+                    if(zone.overlaps(body)) { 
+                        bodyInZone = true;
+                        break;
+                    }
+                }
+                anyDanger = true;
+                if (newDanger) {
+                    MonitorUtils.logAlert(bodyInZone
+                    ? "DANGER: person in " + zone.getName()
+                    : "Watching: motion in " + zone.getName());
+                }
+
+                Imgproc.putText(frame, (bodyInZone ? "DANGER: " : "WATCHING: ") + zone.getName(), zone.getPoints().get(0),
+                    Imgproc.FONT_HERSHEY_SIMPLEX, 0.8, new Scalar(0, 165, 255), 2);
+            }
+        }
+
+        MonitorUtils.babyState = anyDanger ? "In danger zone" : "Clear";
+        MonitorUtils.updateInfoPanel(anyDanger);
+        return ImageUtils.matToBufferedImage(frame);
+    }
+
+    private Mat drawCalibration(Mat frame) {
+        Mat display = frame.clone();
+
+        Imgproc.putText(display,
+            "Click corners. Press ENTER to close zone. Double ENTER when done.",
+            new Point(10, 30), Imgproc.FONT_HERSHEY_SIMPLEX, 0.7, new Scalar(255, 255, 255), 2);
+
+        for (DangerZone zone : zones) {
+            drawPolygon(display, zone.getPoints(), GREEN);
+            for (Point p : zone.getPoints()) {
+                Imgproc.circle(display, p, 6, GREEN, -1);
+            }
+        }
+
+        List<Point> pts = currentZone.getPoints();
+        for (Point p : pts) {
+            Imgproc.circle(display, p, 6, YELLOW, -1);
+        }
+        for (int i = 0; i < pts.size() - 1; i++) {
+            Imgproc.line(display, pts.get(i), pts.get(i + 1), YELLOW, 2);
+        }
+        if (!pts.isEmpty()) {
+            Imgproc.line(display, pts.get(pts.size() - 1), currentMouse, GRAY, 1);
+        }
+        return display;
+    }
+
+    private void drawPolygon(Mat target, List<Point> pts, Scalar color) {
+        for (int i = 0; i < pts.size(); i++) {
+            Imgproc.line(target, pts.get(i), pts.get((i + 1) % pts.size()), color, 2);
+        }
+    }
 }

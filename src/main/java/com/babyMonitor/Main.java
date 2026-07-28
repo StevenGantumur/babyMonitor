@@ -1,27 +1,15 @@
 package com.babyMonitor;
 
-import java.util.Scanner;
+import java.util.List;
+import javax.swing.SwingUtilities;
+import nu.pattern.OpenCV;
 
 public class Main {
     public static void main(String[] args) {
-        Scanner scanner = new Scanner(System.in);
-        System.out.println("Welcome to the Baby Monitor! By Steven Gantumur The Third!!!!");
-        System.out.println("Please select a mode:");
-        System.out.println("1. Crib Monitor");
-        System.out.println("2. Room/PlayPlace Monitor");
+        OpenCV.loadLocally();
 
-        int choice = scanner.nextInt();
-        
-        if (choice == 1) {
-            System.out.println("Starting Crib Monitor...");
-            CribMonitor.start();
-        } else if (choice == 2) {
-            System.out.println("Starting Room Monitor...");
-            RoomMonitor.start();
-        } else {
-            System.out.println("Invalid choice. Please restart.");
-        }
-        
-        scanner.close();
+        List<Monitor> modes = List.of(new CribMonitor(), new RoomMonitor());
+
+        SwingUtilities.invokeLater(() -> new MonitorApp(modes).start());
     }
 }

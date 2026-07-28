@@ -1,13 +1,7 @@
 package com.babyMonitor;
 
-import java.awt.BorderLayout;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.List;
-import javax.swing.JFrame;
-import javax.swing.JPanel;
-import javax.swing.SwingUtilities;
 import org.opencv.core.Core;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfRect;
@@ -17,200 +11,168 @@ import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.objdetect.CascadeClassifier;
-import org.opencv.videoio.VideoCapture;
 import com.babyMonitor.utils.DangerZone;
 import com.babyMonitor.utils.ImageUtils;
 import com.babyMonitor.utils.ResourceUtils;
 import com.babyMonitor.utils.MonitorUtils;
-import nu.pattern.OpenCV;
 
+public class CribMonitor implements Monitor {
 
-public class CribMonitor {
-    // Crib setup and count
-    static DangerZone cribZone = new DangerZone("Crib", 0);
-    static int clickCount = 0;
-    static boolean calibrated = false;
-    // diff
-    static BufferedImage currentImage = null;
+    private static final int MOTION_THRESHOLD = 500;
+    private static final int DIFF_THRESHOLD = 30;
+    private static final int CORNERS_NEEDED = 4;
 
+    private static final String[] INSTRUCTIONS = {
+        "Click TOP-LEFT corner of crib",
+        "Click TOP-RIGHT corner of crib",
+        "Click BOTTOM-RIGHT corner of crib",
+        "Click BOTTOM-LEFT corner of crib"
+    };
 
+    private DangerZone cribZone = new DangerZone("Crib", 0);
+    private boolean calibrated = false;
 
-    public static void start() {
-        OpenCV.loadLocally();
-        CascadeClassifier faceDetector;
-        try {
-            String facePath = ResourceUtils.extractResource("haarcascade_frontalface_default.xml");
-            faceDetector = new CascadeClassifier(facePath);
-        } catch (Exception e) {
-            System.out.println("Error: " + e.getMessage());
-            return;
-        }
+    private final Mat grayFrame = new Mat();
+    private final Mat previousFrame = new Mat();
+    private final Mat diff = new Mat();
+    private final MatOfRect faces = new MatOfRect();
 
-        VideoCapture camera = new VideoCapture(0);
-        Mat frame = new Mat();
-        Mat grayFrame = new Mat();
-        Mat previousFrame = new Mat();
-        Mat diff = new Mat();
-        MatOfRect faces = new MatOfRect();
+    private CascadeClassifier faceDetector;
 
-        JFrame window = new JFrame("Crib Monitor");
-        window.setLayout(new BorderLayout());
-        window.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        JPanel panel = new JPanel() {
-            @Override
-            protected void paintComponent(java.awt.Graphics g) {
-                super.paintComponent(g);
-                if (currentImage != null) {
-                    g.drawImage(currentImage, 0, 0, getWidth(), getHeight(), null);
-                }
-            }
-        };
-
-        JPanel infoPanel = MonitorUtils.buildInfoPanel();
-
-        window.add(panel, BorderLayout.CENTER);
-        window.add(infoPanel, BorderLayout.EAST);
-        window.setSize(1560, 720);
-        window.setVisible(true);  
-
-        panel.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                if (!calibrated) {
-                    double scaleX = (double) frame.cols() / panel.getWidth();
-                    double scaleY = (double) frame.rows() / panel.getHeight();
-                    int actualX = (int)(e.getX() * scaleX);
-                    int actualY = (int)(e.getY() * scaleY);
-                    cribZone.addPoint(new Point(actualX, actualY));
-                    clickCount++;
-                    if (clickCount == 4) {
-                        calibrated = true;
-                        System.out.println("Calibration complete!");
-                    }
-                }
-            }
-        });
-
-        while(camera.isOpened()) {
-            camera.read(frame);
-            if (frame.empty()) continue;
-            Imgproc.cvtColor(frame, grayFrame, Imgproc.COLOR_BGR2GRAY);
-
-            if(!calibrated) {
-                String[] instructions = {
-                    "Click TOP-LEFT corner of crib",
-                    "Click TOP-RIGHT corner of crib",
-                    "Click BOTTOM-RIGHT corner of crib",
-                    "Click BOTTOM-LEFT corner of crib"
-                };
-
-                Mat display = frame.clone();
-
-                Imgproc.putText(display, instructions[clickCount],
-                    new Point(10, 30),
-                    Imgproc.FONT_HERSHEY_SIMPLEX,
-                    1.2, new Scalar(255, 255, 255), 2);
-
-                for (int i = 0; i < clickCount; i++) {
-                    Imgproc.circle(display, cribZone.getPoints().get(i), 8,
-                        new Scalar(0, 255, 255), -1);
-                }
-                currentImage = ImageUtils.matToBufferedImage(display);
-                SwingUtilities.invokeLater(() -> panel.repaint());
-            }
-            else {
-                if(previousFrame.empty()) {
-                    grayFrame.copyTo(previousFrame);
-                    continue;
-                }
-                Core.absdiff(previousFrame, grayFrame, diff);
-                Imgproc.threshold(diff, diff, 30, 255, Imgproc.THRESH_BINARY);
-                grayFrame.copyTo(previousFrame);
-
-                MonitorUtils.currentMotionLevel = Core.countNonZero(diff);
-                int motionThreshold = 500;
-                boolean danger = false;
-                if (MonitorUtils.currentMotionLevel > motionThreshold) {
-                    danger = checkDanger(frame, diff);
-                }
-                MonitorUtils.updateInfoPanel(danger);
-
-                List<Point> corners = cribZone.getPoints();
-                for (int i = 0; i < corners.size(); i++) {
-                    Imgproc.line(frame, corners.get(i), corners.get((i + 1) % corners.size()),
-                        new Scalar(0, 255, 255), 2);
-                }
-
-                faceDetector.detectMultiScale(grayFrame, faces, 1.1, 5, 0,
-                    new Size(30, 30), new Size());
-                for(Rect face : faces.toArray()){
-                    Imgproc.rectangle(frame, face, new Scalar(0, 255, 0), 2);
-                    MonitorUtils.babyState = "Face Detected!";
-                }
-
-                if (faces.toArray().length == 0) {
-                    if (MonitorUtils.currentMotionLevel > 5000) {
-                        MonitorUtils.babyState = "Active";
-                    } 
-                    else if (MonitorUtils.currentMotionLevel > 2500) {
-                        MonitorUtils.babyState = "Stirring";
-                    } 
-                    else {
-                        MonitorUtils.babyState = "Still";
-                    }
-                }
-
-                currentImage = ImageUtils.matToBufferedImage(frame);
-                SwingUtilities.invokeLater(() -> panel.repaint());
-            }
-        }
-    
+    @Override
+    public String getName() {
+        return "Crib Monitor";
     }
 
-    static boolean checkDanger(Mat frame, Mat diff){
-        if (!calibrated) return false;
+    @Override
+    public void setActive(boolean active) {
+        if (!active) return;
 
-        Mat points = new Mat();
-        Core.findNonZero(diff, points);
+        if (faceDetector == null) {
+            try {
+                faceDetector = new CascadeClassifier(
+                    ResourceUtils.extractResource("haarcascade_frontalface_default.xml"));
+            } catch (Exception e) {
+                System.out.println("Crib Monitor: could not load face cascade - " + e.getMessage());
+            }
+        }
+        previousFrame.release();
+        System.out.println(calibrated
+            ? "Crib Monitor active. Press 'r' to recalibrate."
+            : "Crib Monitor active. " + INSTRUCTIONS[cribZone.getPoints().size()]);
+    }
 
-        if(points.empty()) return false;
+    @Override
+    public void onClick(int x, int y) {
+        if (calibrated) return;
+        cribZone.addPoint(new Point(x, y));
+        if (cribZone.getPoints().size() == CORNERS_NEEDED) {
+            calibrated = true;
+            System.out.println("Calibration complete!");
+        }
+    }
 
-        Rect motionArea = Imgproc.boundingRect(points);
+    @Override
+    public void onKey(char key) {
+        if (key == 'r' || key == 'R') {
+            cribZone = new DangerZone("Crib", 0);
+            calibrated = false;
+            System.out.println("Crib Monitor: calibration reset. " + INSTRUCTIONS[0]);
+        }
+    }
+
+    @Override
+    public BufferedImage processFrame(Mat frame) {
+        Imgproc.cvtColor(frame, grayFrame, Imgproc.COLOR_BGR2GRAY);
+
+        if (!calibrated) {
+            return ImageUtils.matToBufferedImage(drawCalibration(frame));
+        }
+
+        if (previousFrame.empty()) {
+            grayFrame.copyTo(previousFrame);
+            return ImageUtils.matToBufferedImage(frame);
+        }
+
+        Core.absdiff(previousFrame, grayFrame, diff);
+        Imgproc.threshold(diff, diff, DIFF_THRESHOLD, 255, Imgproc.THRESH_BINARY);
+        grayFrame.copyTo(previousFrame);
+
+        MonitorUtils.currentMotionLevel = Core.countNonZero(diff);
+        boolean danger = MonitorUtils.currentMotionLevel > MOTION_THRESHOLD && checkDanger(frame, diff);
+        if(cribZone.isNewDanger(danger)) {
+            MonitorUtils.logAlert("DANGER: Baby near crib edge!");
+        }
+        MonitorUtils.updateInfoPanel(danger);
 
         List<Point> corners = cribZone.getPoints();
+        for (int i = 0; i < corners.size(); i++) {
+            Imgproc.line(frame, corners.get(i), corners.get((i + 1) % corners.size()),
+                new Scalar(0, 255, 255), 2);
+        }
+
+        if (faceDetector != null) {
+            faceDetector.detectMultiScale(grayFrame, faces, 1.1, 5, 0, new Size(30, 30), new Size());
+            for (Rect face : faces.toArray()) {
+                Imgproc.rectangle(frame, face, new Scalar(0, 255, 0), 2);
+                MonitorUtils.babyState = "Face Detected!";
+            }
+        }
+
+        if (faces.empty() || faces.toArray().length == 0) {
+            if (MonitorUtils.currentMotionLevel > 5000) {
+                MonitorUtils.babyState = "Active";
+            } else if (MonitorUtils.currentMotionLevel > 2500) {
+                MonitorUtils.babyState = "Stirring";
+            } else {
+                MonitorUtils.babyState = "Still";
+            }
+        }
+
+        return ImageUtils.matToBufferedImage(frame);
+    }
+
+    private Mat drawCalibration(Mat frame) {
+        Mat display = frame.clone();
+        List<Point> corners = cribZone.getPoints();
+
+        Imgproc.putText(display, INSTRUCTIONS[corners.size()], new Point(10, 30),
+            Imgproc.FONT_HERSHEY_SIMPLEX, 1.2, new Scalar(255, 255, 255), 2);
+
+        for (Point corner : corners) {
+            Imgproc.circle(display, corner, 8, new Scalar(0, 255, 255), -1);
+        }
+        return display;
+    }
+
+    private boolean checkDanger(Mat frame, Mat diff) {
+        Mat points = new Mat();
+        Core.findNonZero(diff, points);
+        if (points.empty()) return false;
+
+        Rect motionArea = Imgproc.boundingRect(points);
+        List<Point> corners = cribZone.getPoints();
+
         int left   = (int) Math.min(corners.get(0).x, corners.get(3).x);
         int top    = (int) Math.min(corners.get(0).y, corners.get(1).y);
         int right  = (int) Math.max(corners.get(1).x, corners.get(2).x);
         int bottom = (int) Math.max(corners.get(2).y, corners.get(3).y);
 
-        int dangerZoneX = (right - left) / 10;
-        int dangerZoneY = (bottom - top) / 10;
+        int marginX = (right - left) / 10;
+        int marginY = (bottom - top) / 10;
 
+        boolean danger = motionArea.y < top + marginY
+            || (motionArea.y + motionArea.height) > bottom - marginY
+            || motionArea.x < left + marginX
+            || (motionArea.x + motionArea.width) > right - marginX;
 
-        boolean nearTop    = motionArea.y < top + dangerZoneY;
-        boolean nearBottom = (motionArea.y + motionArea.height) > bottom - dangerZoneY;
-        boolean nearLeft   = motionArea.x < left + dangerZoneX;
-        boolean nearRight  = (motionArea.x + motionArea.width) > right - dangerZoneX;
-
-        boolean danger = nearTop || nearBottom || nearLeft || nearRight;
-
-        if(danger){
-            Imgproc.putText(frame, "DANGER - Baby near edge!",
-            new Point(10, 60),
-            Imgproc.FONT_HERSHEY_SIMPLEX,
-            0.8, new Scalar(0, 0, 255), 2);
-
-            Imgproc.rectangle(frame,
-                new Point(left, top),
-                new Point(right, bottom),
+        if (danger) {
+            Imgproc.putText(frame, "DANGER - Baby near edge!", new Point(10, 60),
+                Imgproc.FONT_HERSHEY_SIMPLEX, 0.8, new Scalar(0, 0, 255), 2);
+            Imgproc.rectangle(frame, new Point(left, top), new Point(right, bottom),
                 new Scalar(0, 0, 255), 3);
-
-            MonitorUtils.logAlert("DANGER: Baby near crib edge!");
-        }
-        else {
-            Imgproc.rectangle(frame,
-                new Point(left, top),
-                new Point(right, bottom),
+        } else {
+            Imgproc.rectangle(frame, new Point(left, top), new Point(right, bottom),
                 new Scalar(0, 255, 0), 2);
         }
         return danger;
